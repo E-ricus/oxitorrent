@@ -1,45 +1,69 @@
 use serde_json::{self, Value};
 use std::env;
 
-// Available if you need it!
-// use serde_bencode
-
-fn decode_bencoded_value(encoded_value: &str) -> Value {
-    let mut iter = encoded_value.chars();
-    match iter.next() {
-        // String encoded
-        Some(c) if c.is_ascii_digit() => {
-            // TODO: Refactor
-            let colon_index = encoded_value.find(':').unwrap();
-            let number_string = &encoded_value[..colon_index];
-            let number = number_string.parse::<i64>().unwrap();
-            let string = &encoded_value[colon_index + 1..colon_index + 1 + number as usize];
-            Value::String(string.to_string())
-        }
+fn decode_bencoded_value(encoded_value: &str) -> (Value, &str) {
+    match encoded_value.chars().next() {
+        // Number encoded
         Some('i') => {
-            if let Some('e') = iter.next_back() {
-                let number = iter.collect::<String>();
-                Value::Number(number.parse().unwrap())
-            } else {
-                panic!("Unhandled encoded value: {}", encoded_value)
+            if let Some((n, rest)) =
+                encoded_value
+                    .split_at(1)
+                    .1
+                    .split_once('e')
+                    .and_then(|(digits, rest)| {
+                        let n = digits.parse::<i64>().ok()?;
+                        Some((n, rest))
+                    })
+            {
+                return (n.into(), rest);
             }
         }
-        _ => panic!("Unhandled encoded value: {}", encoded_value),
+        // List encoded
+        Some('l') => {
+            let mut elems = Vec::new();
+            let mut rest = encoded_value.split_at(1).1;
+            while !rest.is_empty() && !rest.starts_with('e') {
+                let (e, reminder) = decode_bencoded_value(rest);
+                elems.push(e);
+                rest = reminder;
+            }
+            return (elems.into(), &rest[1..]);
+        }
+        // String encoded
+        Some(c) if c.is_ascii_digit() => {
+            if let Some((len, rest)) = encoded_value.split_once(':') {
+                let len = len.parse::<usize>().unwrap();
+                return (rest[..len].to_string().into(), &rest[len..]);
+            }
+        }
+        _ => {}
     }
+    panic!("Unhandled encoded value: {}", encoded_value)
 }
 
 #[test]
 fn decode_str() {
     let encoded = "4:hola";
     let decoded = decode_bencoded_value(encoded);
-    assert_eq!(Value::String("hola".to_string()), decoded);
+    assert_eq!(Value::String("hola".to_string()), decoded.0);
 }
 
 #[test]
 fn decode_number() {
     let encoded = "i52e";
     let decoded = decode_bencoded_value(encoded);
-    assert_eq!(Value::Number(52.into()), decoded);
+    assert_eq!(Value::Number(52.into()), decoded.0);
+}
+
+#[test]
+fn decode_list() {
+    let encoded = "li52e4:holae";
+    let decoded = decode_bencoded_value(encoded);
+    let expec = Value::Array(vec![
+        Value::Number(52.into()),
+        Value::String("hola".to_string()),
+    ]);
+    assert_eq!(expec, decoded.0);
 }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
@@ -50,7 +74,7 @@ fn main() {
     if command == "decode" {
         let encoded_value = &args[2];
         let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value);
+        println!("{}", decoded_value.0);
     } else {
         println!("unknown command: {}", args[1])
     }
