@@ -1,5 +1,5 @@
 use serde_json::{self, Value};
-use std::{collections::HashMap, env};
+use std::env;
 
 fn decode_bencoded_value(encoded_value: &str) -> (Value, &str) {
     match encoded_value.chars().next() {
@@ -35,6 +35,10 @@ fn decode_bencoded_value(encoded_value: &str) -> (Value, &str) {
             let mut rest = encoded_value.split_at(1).1;
             while !rest.is_empty() && !rest.starts_with('e') {
                 let (k, reminder) = decode_bencoded_value(rest);
+                let k = match k {
+                    Value::String(k) => k,
+                    _ => panic!("invalid key"),
+                };
                 let (v, reminder) = decode_bencoded_value(reminder);
                 dict.insert(k.to_string(), v);
                 rest = reminder;
@@ -78,13 +82,13 @@ fn decode_list() {
     assert_eq!(expec, decoded.0);
 }
 
-// #[test]
-// fn decode_dict() {
-//     let encoded = "d3:foo3:bar5:helloi52ee";
-//     let decoded = decode_bencoded_value(encoded);
-//     let expec = serde_json::json!({"foo":"bar", "hello": 53});
-//     assert_eq!(expec, decoded.0);
-// }
+#[test]
+fn decode_dict() {
+    let encoded = "d3:foo3:bar5:helloi52ee";
+    let decoded = decode_bencoded_value(encoded);
+    let expec = serde_json::json!({"foo":"bar", "hello": 52});
+    assert_eq!(expec, decoded.0);
+}
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() {
