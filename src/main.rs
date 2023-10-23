@@ -1,5 +1,5 @@
 use serde_json::{self, Value};
-use std::env;
+use std::{collections::HashMap, env};
 
 fn decode_bencoded_value(encoded_value: &str) -> (Value, &str) {
     match encoded_value.chars().next() {
@@ -28,6 +28,18 @@ fn decode_bencoded_value(encoded_value: &str) -> (Value, &str) {
                 rest = reminder;
             }
             return (elems.into(), &rest[1..]);
+        }
+        // List encoded
+        Some('d') => {
+            let mut dict = serde_json::Map::new();
+            let mut rest = encoded_value.split_at(1).1;
+            while !rest.is_empty() && !rest.starts_with('e') {
+                let (k, reminder) = decode_bencoded_value(rest);
+                let (v, reminder) = decode_bencoded_value(reminder);
+                dict.insert(k.to_string(), v);
+                rest = reminder;
+            }
+            return (dict.into(), &rest[1..]);
         }
         // String encoded
         Some(c) if c.is_ascii_digit() => {
@@ -65,6 +77,14 @@ fn decode_list() {
     ]);
     assert_eq!(expec, decoded.0);
 }
+
+// #[test]
+// fn decode_dict() {
+//     let encoded = "d3:foo3:bar5:helloi52ee";
+//     let decoded = decode_bencoded_value(encoded);
+//     let expec = serde_json::json!({"foo":"bar", "hello": 53});
+//     assert_eq!(expec, decoded.0);
+// }
 
 // Usage: your_bittorrent.sh decode "<encoded_value>"
 fn main() {
