@@ -1,4 +1,5 @@
 pub mod torrent;
+pub mod tracker;
 
 use serde_json::{self, Value};
 

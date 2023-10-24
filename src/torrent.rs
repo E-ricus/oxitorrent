@@ -1,10 +1,21 @@
+use anyhow::Result;
 use pieces::Pieces;
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Torrent {
     pub announce: String,
     pub info: Info,
+}
+
+impl Torrent {
+    pub fn info_hash(&self) -> Result<[u8; 20]> {
+        let mut hasher = Sha1::new();
+        let encoded = serde_bencode::to_bytes(&self.info)?;
+        hasher.update(&encoded);
+        Ok(hasher.finalize().try_into()?)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -56,7 +67,7 @@ mod pieces {
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_i32(PiecesVisitor)
+            deserializer.deserialize_bytes(PiecesVisitor)
         }
     }
 
