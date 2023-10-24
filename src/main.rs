@@ -141,6 +141,11 @@ fn main() -> anyhow::Result<()> {
             println!("Tracker URL: {}", t.announce);
             println!("Length: {}", t.info.length);
             println!("Info Hash: {}", hex::encode(info_hash));
+            println!("Piece Length: {}", t.info.plength);
+            println!("Piece Hashes:");
+            for piece in t.info.pieces.0 {
+                println!("{}", hex::encode(piece));
+            }
         }
     }
     Ok(())
@@ -155,7 +160,7 @@ mod pieces {
     };
 
     #[derive(Debug, Clone)]
-    pub struct Pieces(Vec<[u8; 20]>);
+    pub struct Pieces(pub Vec<[u8; 20]>);
 
     struct PiecesVisitor;
 
