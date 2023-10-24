@@ -24,11 +24,12 @@ struct Torrent {
 
 #[derive(Debug, Clone, Deserialize)]
 struct Info {
-    lenght: usize,
-    name: String,
-    #[serde(rename = "piece lenght")]
-    plenght: usize,
-    pieces: Vec<u8>,
+    length: usize,
+    // Unused by now
+    // name: String,
+    // #[serde(rename = "piece length")]
+    // plength: usize,
+    // pieces: Vec<u8>,
 }
 
 fn decode_bencoded_value(encoded_value: &str) -> (Value, &str) {
@@ -131,8 +132,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Info { torrent } => {
             let file = std::fs::read(torrent)?;
             let t: Torrent = serde_bencode::from_bytes(&file)?;
-            println!("Tracker URL:{}", t.announce);
-            println!("Length:{}", t.info.lenght);
+            println!("Tracker URL: {}", t.announce);
+            println!("Length: {}", t.info.length);
         }
     }
     Ok(())
