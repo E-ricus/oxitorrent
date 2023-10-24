@@ -1,5 +1,35 @@
+use clap::{Parser, Subcommand};
+use serde::Deserialize;
 use serde_json::{self, Value};
-use std::env;
+use std::path::PathBuf;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about=None)]
+struct Args {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    Decode { value: String },
+    Info { torrent: PathBuf },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Torrent {
+    announce: String,
+    info: Info,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct Info {
+    lenght: usize,
+    name: String,
+    #[serde(rename = "piece lenght")]
+    plenght: usize,
+    pieces: Vec<u8>,
+}
 
 fn decode_bencoded_value(encoded_value: &str) -> (Value, &str) {
     match encoded_value.chars().next() {
@@ -90,16 +120,20 @@ fn decode_dict() {
     assert_eq!(expec, decoded.0);
 }
 
-// Usage: your_bittorrent.sh decode "<encoded_value>"
-fn main() {
-    let args: Vec<String> = env::args().collect();
-    let command = &args[1];
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    match args.command {
+        Commands::Decode { value } => {
+            let decoded_value = decode_bencoded_value(&value);
+            println!("{}", decoded_value.0);
+        }
 
-    if command == "decode" {
-        let encoded_value = &args[2];
-        let decoded_value = decode_bencoded_value(encoded_value);
-        println!("{}", decoded_value.0);
-    } else {
-        println!("unknown command: {}", args[1])
+        Commands::Info { torrent } => {
+            let file = std::fs::read(torrent)?;
+            let t: Torrent = serde_bencode::from_bytes(&file)?;
+            println!("Tracker URL:{}", t.announce);
+            println!("Length:{}", t.info.lenght);
+        }
     }
+    Ok(())
 }
