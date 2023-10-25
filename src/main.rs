@@ -1,7 +1,11 @@
+use bittorrent_starter_rust::peer::{self, Handshake};
 use bittorrent_starter_rust::torrent::Torrent;
 use bittorrent_starter_rust::tracker::{self, TrackerRequest, TrackerResponse};
 use clap::{Parser, Subcommand};
+use std::net::SocketAddrV4;
 use std::path::PathBuf;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about=None)]
@@ -15,6 +19,7 @@ enum Commands {
     Decode { value: String },
     Info { torrent: PathBuf },
     Peers { torrent: PathBuf },
+    Handshake { torrent: PathBuf, peer: String },
 }
 
 #[tokio::main]
@@ -67,6 +72,28 @@ async fn main() -> anyhow::Result<()> {
             for peer in response.peers.0 {
                 println!("{peer}");
             }
+        }
+        Commands::Handshake { torrent, peer } => {
+            let file = std::fs::read(torrent)?;
+            let t: Torrent = serde_bencode::from_bytes(&file)?;
+            let info_hash = t.info_hash()?;
+
+            let peer = peer.parse::<SocketAddrV4>()?;
+            let mut connection = TcpStream::connect(peer).await?;
+
+            let mut handshake = Handshake::new(info_hash, *b"00112233445566778899");
+
+            // Drops unsafe slice pointer after reading it
+            {
+                // Generates a mutable slice pointer to handshake
+                let bytes = peer::as_bytes_mut(&mut handshake);
+
+                connection.write_all(bytes).await?;
+
+                // Reads to the same bytes slice pointing to the handshake struct
+                connection.read_exact(bytes).await?;
+            }
+            println!("Peer ID: {}", hex::encode(handshake.peer_id));
         }
     }
     Ok(())
