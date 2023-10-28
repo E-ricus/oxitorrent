@@ -28,12 +28,14 @@ pub fn as_bytes_mut(data: &mut Handshake) -> &mut [u8] {
     unsafe { std::slice::from_raw_parts_mut(ptr, len) }
 }
 
+#[derive(Debug, Clone)]
 pub struct Message {
-    tag: MessageTag,
-    payload: Vec<u8>,
+    pub tag: MessageTag,
+    pub payload: Vec<u8>,
 }
 
 #[repr(u8)]
+#[derive(Debug, Clone, Copy)]
 pub enum MessageTag {
     Choke = 0,
     Unchoke = 1,
@@ -46,7 +48,7 @@ pub enum MessageTag {
     Cancel = 8,
 }
 
-struct MessageFramer;
+pub struct MessageFramer;
 
 const MAX: usize = 1 << 16;
 
@@ -55,7 +57,7 @@ impl Decoder for MessageFramer {
     type Error = std::io::Error;
 
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        if src.len() < 5 {
+        if src.len() < 4 {
             // Not enough data to read length marker.
             return Ok(None);
         }
@@ -64,6 +66,13 @@ impl Decoder for MessageFramer {
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&src[..4]);
         let length = u32::from_be_bytes(length_bytes) as usize;
+
+        // Hearbeath should be discarded
+        if length == 0 {
+            src.advance(4);
+            // try the next
+            return self.decode(src);
+        }
 
         // Check that the length is not too large to avoid a denial of
         // service attack where the server runs out of memory.
