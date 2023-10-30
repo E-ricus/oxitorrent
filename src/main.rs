@@ -81,7 +81,7 @@ async fn main() -> Result<()> {
             let info_hash = torrent.info_hash()?;
 
             let peer = peer.parse::<SocketAddrV4>()?;
-            let peer = Peer::new(peer, info_hash).await?;
+            let peer = Peer::connect_peer(peer, info_hash).await?;
 
             println!("Peer ID: {}", hex::encode(peer.peer_id));
         }
@@ -134,10 +134,9 @@ async fn download_piece(torrent: PathBuf, output: PathBuf, piece_index: usize) -
     assert!(piece_index < torrent.info.pieces.0.len());
 
     let peers = get_peers(&torrent).await?;
-    // TODO: Use all the peers
-    let peer_address = peers[1];
+    let peer_address = peers[0];
 
-    let mut peer = Peer::new(peer_address, info_hash).await?;
+    let mut peer = Peer::connect_peer(peer_address, info_hash).await?;
 
     let msg_bitfield = peer.read_message().await?;
     // Bitfield has to be th first message always
@@ -169,10 +168,10 @@ async fn download(torrent: PathBuf, output: PathBuf) -> Result<()> {
     let info_hash = torrent.info_hash()?;
 
     let peers = get_peers(&torrent).await?;
-    // TODO: Use all the peers
-    let peer_address = peers[1];
+    // TODO: Use the worker module to add each peer to allow the download of each part simultaneously
+    let peer_address = peers[0];
 
-    let mut peer = Peer::new(peer_address, info_hash).await?;
+    let mut peer = Peer::connect_peer(peer_address, info_hash).await?;
 
     let msg_bitfield = peer.read_message().await?;
     // Bitfield has to be th first message always

@@ -1,6 +1,6 @@
 use std::net::SocketAddrV4;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use bytes::{BufMut, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -96,11 +96,11 @@ impl Message {
     fn to_bytes(&self) -> BytesMut {
         let mut buffer = BytesMut::new();
 
+        // length is the payload + the message tag 1
         let len_slice = u32::to_be_bytes(self.payload.len() as u32 + 1);
 
         buffer.reserve(4 + self.payload.len() + 1);
 
-        // Write the length and string to the buffer.
         buffer.extend_from_slice(&len_slice);
         buffer.put_u8(self.tag as u8);
         buffer.extend_from_slice(&self.payload);
@@ -148,9 +148,13 @@ pub struct Peer {
 }
 
 impl Peer {
-    /// Creates a new peer by han
-    pub async fn new(peer: SocketAddrV4, info_hash: [u8; 20]) -> Result<Self> {
-        let mut connection = TcpStream::connect(peer).await?;
+    /// Creates a new Peer, by creating a Tcp stream, then attempting a Handshake
+    /// with the given peer address
+    /// Returns an error if the handshake fails.
+    pub async fn connect_peer(peer: SocketAddrV4, info_hash: [u8; 20]) -> Result<Self> {
+        let mut connection = TcpStream::connect(peer)
+            .await
+            .context("connecting to peer")?;
 
         let mut handshake = Handshake::new(info_hash, *b"00112233445566778899");
 
@@ -159,10 +163,16 @@ impl Peer {
             // Generates a mutable slice pointer to handshake
             let bytes = as_bytes_mut(&mut handshake);
 
-            connection.write_all(bytes).await?;
+            connection
+                .write_all(bytes)
+                .await
+                .context("sending request")?;
 
             // Reads to the same bytes slice pointing to the handshake struct
-            connection.read_exact(bytes).await?;
+            connection
+                .read_exact(bytes)
+                .await
+                .context("recieving handshake")?;
         }
         Ok(Self {
             stream: connection,
@@ -186,7 +196,6 @@ impl Peer {
         self.stream.read_exact(&mut message_length).await?;
 
         let message_length = u32::from_be_bytes(message_length);
-        eprintln!("Length: {}\n", message_length);
 
         let mut message_type: [u8; 1] = [0; 1];
         self.stream.read_exact(&mut message_type).await?;
@@ -194,12 +203,9 @@ impl Peer {
         let tag = message_type[0];
         let message_tag = MessageTag::from_u8(tag)?;
 
-        eprintln!("Message type: {:?}\n", message_tag);
-
         let mut payload: Vec<u8> = vec![0; message_length as usize - 1];
-        // Read a message of length message_length - 1 (message_type is already read)
+        // Read a message of length message_length - 1 (message_tag is already read)
         self.stream.read_exact(&mut payload).await?;
-        eprintln!("Length of recieved payload: {}\n", payload.len());
 
         let message = Message {
             tag: message_tag,

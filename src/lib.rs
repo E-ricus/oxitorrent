@@ -1,6 +1,7 @@
 pub mod peer;
 pub mod torrent;
 pub mod tracker;
+pub mod worker;
 
 use serde_json::{self, Value};
 

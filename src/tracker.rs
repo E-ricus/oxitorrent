@@ -41,9 +41,9 @@ mod peers {
     #[derive(Debug, Clone)]
     pub struct Peers(pub Vec<SocketAddrV4>);
 
-    struct PiecesVisitor;
+    struct PeerVisitor;
 
-    impl<'de> Visitor<'de> for PiecesVisitor {
+    impl<'de> Visitor<'de> for PeerVisitor {
         type Value = Peers;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -75,7 +75,7 @@ mod peers {
         where
             D: Deserializer<'de>,
         {
-            deserializer.deserialize_bytes(PiecesVisitor)
+            deserializer.deserialize_bytes(PeerVisitor)
         }
     }
 }
