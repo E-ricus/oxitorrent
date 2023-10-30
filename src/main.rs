@@ -1,18 +1,16 @@
+use anyhow::{Context, Result};
 use bittorrent_starter_rust::peer::{self, *};
 use bittorrent_starter_rust::torrent::Torrent;
 use bittorrent_starter_rust::tracker::{self, TrackerRequest, TrackerResponse};
 use clap::{Parser, Subcommand};
-use futures_util::{SinkExt, StreamExt};
 use sha1::{Digest, Sha1};
+use std::io::Write;
 use std::net::SocketAddrV4;
 use std::path::PathBuf;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use tokio_util::codec::Framed;
 
-// const BLOCK_MAX: u32 = 16384;
-const BLOCK_MAX: u32 = 17000;
-// const BLOCK_MAX: usize = 1 << 14;
+const BLOCK_MAX: u32 = 16384;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about=None)]
@@ -46,7 +44,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let args = Args::parse();
     match args.command {
         Commands::Decode { value } => {
@@ -150,7 +148,7 @@ async fn main() -> anyhow::Result<()> {
             let tracker_info: TrackerResponse = serde_bencode::from_bytes(&response)?;
 
             // TODO: Use all the peers
-            let peer = tracker_info.peers.0[0];
+            let peer = tracker_info.peers.0[1];
 
             let mut connection = TcpStream::connect(peer).await?;
 
@@ -162,22 +160,20 @@ async fn main() -> anyhow::Result<()> {
                 let bytes = peer::as_bytes_mut(&mut handshake);
 
                 connection.write_all(bytes).await?;
-                connection.flush().await?;
 
                 // Reads to the same bytes slice pointing to the handshake struct
                 connection.read_exact(bytes).await?;
-                connection.flush().await?;
             }
             eprintln!("Peer ID: {}", hex::encode(handshake.peer_id));
 
-            let mut peer = Framed::new(connection, MessageFramer);
-            let msg_bitfield = peer.next().await.unwrap()?;
+            let mut peer = Peer::new(connection, handshake.peer_id);
+            let msg_bitfield = peer.read_message().await?;
             // Bitfield has to be th first message always
             assert_eq!(msg_bitfield.tag, MessageTag::Bitfield);
             eprintln!("Got bitfield");
 
             // Send interested
-            peer.send(Message {
+            peer.send_message(Message {
                 tag: MessageTag::Interested,
                 payload: Vec::new(),
             })
@@ -185,7 +181,7 @@ async fn main() -> anyhow::Result<()> {
             eprintln!("sent interested");
 
             // Await for unchoke
-            let msg_unchocked = peer.next().await.unwrap()?;
+            let msg_unchocked = peer.read_message().await?;
             // Bitfield has to be th first message always
             assert_eq!(msg_unchocked.tag, MessageTag::Unchoke);
             assert!(msg_unchocked.payload.is_empty());
@@ -193,72 +189,45 @@ async fn main() -> anyhow::Result<()> {
 
             // Request a piece by blocks
             let piece_hash = &t.info.pieces.0[piece_index];
-            // let piece_length = if piece == t.info.pieces.0.len() + 1 {
-            //     t.info.length % t.info.plength
-            // } else {
-            //     t.info.plength
-            // };
 
-            eprintln!("pl {} ln: {}", t.info.plength, t.info.length);
             let piece_size = (t.info.plength).min(t.info.length - t.info.plength * piece_index);
 
-            // let blocks_number = piece_length / BLOCK_MAX;
-            // eprintln!("pl {piece_length} bm: {BLOCK_MAX} bn: {blocks_number}");
-            eprintln!("ps {piece_size} bm: {BLOCK_MAX}");
             let mut blocks: Vec<u8> = Vec::with_capacity(piece_size);
-            let mut block = 0;
-            // for block in 0..blocks_number {
             loop {
-                // let block_length = if block == blocks_number - 1 {
-                //     let modo = piece_length % BLOCK_MAX;
-                //     if modo == 0 {
-                //         BLOCK_MAX
-                //     } else {
-                //         modo
-                //     }
-                // } else {
-                //     BLOCK_MAX
-                // };
-
                 let block_size = BLOCK_MAX.min((piece_size - blocks.len()) as u32);
-                eprintln!("Block size: {block_size}, blocks len: {}", blocks.len());
-                let mut request = Request::new(
-                    piece_index as u32,
-                    // (block * BLOCK_MAX) as u32,
-                    blocks.len() as u32,
-                    block_size as u32,
-                );
+                let mut request = Request::new(piece_index as u32, blocks.len() as u32, block_size);
 
-                peer.send(Message {
+                peer.send_message(Message {
                     tag: MessageTag::Request,
                     payload: Vec::from(peer::as_bytes_mut(&mut request)),
                 })
                 .await?;
 
                 // Waits for a piece
-                let piece_msg = peer.next().await.unwrap()?;
+                let piece_msg = peer.read_message().await?;
                 assert_eq!(piece_msg.tag, MessageTag::Piece);
                 assert!(!piece_msg.payload.is_empty());
 
-                let piece = (&piece_msg.payload[..]) as *const [u8] as *const Piece;
-                let piece = unsafe { &*piece };
-                eprintln!(
-                    "block: {block} received block lenght {} requested: {block_size}",
-                    piece.block().len()
-                );
-                // assert_eq!(piece.block().len(), block_length);
+                let piece = Piece::from_u8(&piece_msg.payload[..])?;
+                assert_eq!(piece.block().len(), block_size as usize);
                 blocks.extend(piece.block());
                 if blocks.len() >= piece_size {
                     break;
                 }
-                block += 1;
             }
 
             assert_eq!(blocks.len(), piece_size);
             let mut hasher = Sha1::new();
             hasher.update(&blocks);
             let hash: [u8; 20] = hasher.finalize().try_into()?;
-            assert_eq!(&hash, piece_hash)
+            assert_eq!(&hash, piece_hash);
+
+            let mut file = std::fs::File::create(output).context("Creating output file failed")?;
+
+            file.write_all(&blocks)
+                .context("Writing to output file failed")?;
+
+            file.flush().context("Output file flush failed")?;
         }
     }
     Ok(())
