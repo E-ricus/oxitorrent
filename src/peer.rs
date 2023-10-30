@@ -1,6 +1,8 @@
 use bytes::{Buf, BufMut, BytesMut};
 use tokio_util::codec::{Decoder, Encoder};
 
+const MAX: usize = 1 << 15;
+
 #[repr(C)]
 pub struct Handshake {
     pub length: u8,
@@ -22,10 +24,56 @@ impl Handshake {
     }
 }
 
-pub fn as_bytes_mut(data: &mut Handshake) -> &mut [u8] {
-    let ptr = data as *mut Handshake as *mut u8;
-    let len = std::mem::size_of::<Handshake>();
+pub fn as_bytes_mut<T: Sized>(data: &mut T) -> &mut [u8] {
+    let ptr = data as *mut T as *mut u8;
+    let len = std::mem::size_of::<T>();
     unsafe { std::slice::from_raw_parts_mut(ptr, len) }
+}
+
+#[repr(C)]
+pub struct Request {
+    index: [u8; 4],
+    begin: [u8; 4],
+    length: [u8; 4],
+}
+
+impl Request {
+    pub fn new(index: u32, begin: u32, length: u32) -> Self {
+        Self {
+            index: index.to_be_bytes(),
+            begin: begin.to_be_bytes(),
+            length: length.to_be_bytes(),
+        }
+    }
+
+    pub fn index(&self) -> u32 {
+        u32::from_be_bytes(self.index)
+    }
+    pub fn begin(&self) -> u32 {
+        u32::from_be_bytes(self.begin)
+    }
+    pub fn length(&self) -> u32 {
+        u32::from_be_bytes(self.length)
+    }
+}
+
+#[repr(C)]
+pub struct Piece {
+    index: [u8; 4],
+    begin: [u8; 4],
+    block: [u8],
+}
+
+impl Piece {
+    pub fn index(&self) -> u32 {
+        u32::from_be_bytes(self.index)
+    }
+    pub fn begin(&self) -> u32 {
+        u32::from_be_bytes(self.begin)
+    }
+    pub fn block(&self) -> &[u8] {
+        &self.block
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -35,7 +83,7 @@ pub struct Message {
 }
 
 #[repr(u8)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MessageTag {
     Choke = 0,
     Unchoke = 1,
@@ -50,8 +98,6 @@ pub enum MessageTag {
 
 pub struct MessageFramer;
 
-const MAX: usize = 1 << 16;
-
 impl Decoder for MessageFramer {
     type Item = Message;
     type Error = std::io::Error;
@@ -59,6 +105,7 @@ impl Decoder for MessageFramer {
     fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
         if src.len() < 4 {
             // Not enough data to read length marker.
+            eprintln!("Not enough data");
             return Ok(None);
         }
 
@@ -66,6 +113,10 @@ impl Decoder for MessageFramer {
         let mut length_bytes = [0u8; 4];
         length_bytes.copy_from_slice(&src[..4]);
         let length = u32::from_be_bytes(length_bytes) as usize;
+        eprintln!(
+            "Received indicated length {length} received src len {}",
+            (src.len() - 4),
+        );
 
         // Hearbeath should be discarded
         if length == 0 {
@@ -92,6 +143,7 @@ impl Decoder for MessageFramer {
 
             // We inform the Framed that we need more bytes to form the next
             // frame.
+            eprintln!("We need more data");
             return Ok(None);
         }
 
@@ -115,7 +167,8 @@ impl Decoder for MessageFramer {
                 ));
             }
         };
-        let data = src[5..3 + length].to_vec();
+        // let data = src[5..4 + length].to_vec();
+        let data = src[5..].to_vec();
 
         src.advance(4 + length);
 
@@ -127,7 +180,7 @@ impl Encoder<Message> for MessageFramer {
     type Error = std::io::Error;
 
     fn encode(&mut self, item: Message, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        // Don't send a string if it is longer than the other end will
+        // Don't send a message if it is longer than the other end will
         // accept.
         if item.payload.len() + 1 > MAX {
             return Err(std::io::Error::new(
