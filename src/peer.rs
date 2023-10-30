@@ -1,3 +1,5 @@
+use std::net::SocketAddrV4;
+
 use anyhow::Result;
 use bytes::{BufMut, BytesMut};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -140,15 +142,32 @@ impl MessageTag {
     }
 }
 
-#[allow(dead_code)]
 pub struct Peer {
     stream: TcpStream,
-    peer_id: [u8; 20],
+    pub peer_id: [u8; 20],
 }
 
 impl Peer {
-    pub fn new(stream: TcpStream, peer_id: [u8; 20]) -> Self {
-        Self { stream, peer_id }
+    /// Creates a new peer by han
+    pub async fn new(peer: SocketAddrV4, info_hash: [u8; 20]) -> Result<Self> {
+        let mut connection = TcpStream::connect(peer).await?;
+
+        let mut handshake = Handshake::new(info_hash, *b"00112233445566778899");
+
+        // Drops unsafe slice pointer after reading it
+        {
+            // Generates a mutable slice pointer to handshake
+            let bytes = as_bytes_mut(&mut handshake);
+
+            connection.write_all(bytes).await?;
+
+            // Reads to the same bytes slice pointing to the handshake struct
+            connection.read_exact(bytes).await?;
+        }
+        Ok(Self {
+            stream: connection,
+            peer_id: handshake.peer_id,
+        })
     }
 
     pub async fn send_message(&mut self, message: Message) -> Result<()> {
